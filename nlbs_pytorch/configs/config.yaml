@@ -1,0 +1,91 @@
+# ======================================================================
+# NLBS dual-view breast-cancer classification — master configuration
+# Every knob referenced by the code lives here. Override on the CLI, e.g.
+#   python scripts/train.py --config configs/config.yaml model.backbone=densenet121
+# ======================================================================
+
+seed: 42
+
+paths:
+  source_root: "/mnt/NewVolume/projects/breast cancer detection"   # READ-ONLY NLBS root
+  metadata_csv: "/mnt/NewVolume/projects/breast cancer detection/NLBSD_Metadata.csv"
+  output_root: "/mnt/NewVolume1/nlbs_pytorch_out"                  # artifacts (volume with space)
+  index_csv: "/mnt/NewVolume1/nlbs_pytorch_out/breast_index.csv"   # built breast-level index
+  splits_csv: "/mnt/NewVolume1/nlbs_pytorch_out/splits.csv"
+
+data:
+  # Binary task: normal (0) vs cancer (1). False Positive folder is ignored.
+  use_folders: ["normal", "abnormal"]          # abnormal '-c' side == cancer breast
+  balance: "downsample"                        # downsample majority to match cancer count
+  neg_per_pos: 2                               # #normal breasts per cancer breast (<=this ratio)
+  split: [0.70, 0.15, 0.15]                    # patient-level train/val/test
+  num_workers: 4
+
+preprocess:
+  clahe: true
+  clahe_clip: 2.0
+  clahe_grid: 8
+  remove_border: true
+  breast_segmentation: true                    # Otsu + largest-connected-component
+  flip_left_to_right: true                     # standardize laterality (chest wall on left)
+  denoise: false                               # optional median denoise
+  img_size: 512                                # final square size
+  # Progressive resizing schedule (epoch -> size); [] disables.
+  progressive_sizes: [[0, 256], [8, 384], [16, 512]]
+
+augment:
+  rotation_deg: 12
+  affine_scale: 0.10
+  affine_translate: 0.06
+  random_crop_scale: [0.85, 1.0]
+  contrast: 0.15
+  gamma: [80, 120]                             # albumentations RandomGamma limits (x100)
+  gaussian_noise_var: [10.0, 50.0]
+  elastic: true
+  random_erasing_p: 0.25
+  mixup_alpha: 0.2                             # 0 disables
+  cutmix_alpha: 0.0                            # 0 disables (see README: use with care)
+  horizontal_flip: false                       # NOT anatomically valid after laterality standardization
+
+model:
+  backbone: "resnet50"                         # resnet50|densenet121|tf_efficientnetv2_s|convnext_tiny
+  pretrained: true
+  fusion: "attention"                          # early|late|dualbranch|feature|attention
+  shared_backbone: false                       # separate CC/MLO encoders
+  dropout: 0.3
+  num_classes: 2
+
+loss:
+  name: "focal"                                # ce|weighted_ce|focal|bce
+  focal_gamma: 2.0
+  focal_alpha: 0.75                            # weight on the positive (cancer) class
+  label_smoothing: 0.05
+
+train:
+  epochs: 40
+  batch_size: 8
+  grad_accum_steps: 2                          # effective batch = batch_size * grad_accum
+  optimizer: "adamw"                           # adamw|sgd|sam
+  base_lr: 3.0e-4
+  head_lr_mult: 10.0                           # head LR = base_lr * this
+  weight_decay: 0.05
+  scheduler: "onecycle"                        # onecycle|cosine|cosine_warmup
+  warmup_epochs: 3
+  grad_clip: 1.0
+  amp: true                                    # automatic mixed precision (GPU only; safe no-op on CPU)
+  ema: true
+  ema_decay: 0.999
+  sampler: "weighted"                          # weighted|balanced|none
+  early_stop_patience: 10
+  monitor: "val_auc"                           # metric to select the best checkpoint
+  freeze_backbone_epochs: 3                    # phase-1 warmup with frozen backbone
+  tta: true                                    # test-time augmentation at eval
+
+optuna:
+  n_trials: 30
+  timeout_min: 240
+  study_name: "nlbs_dualview"
+
+ensemble:
+  backbones: ["resnet50", "densenet121", "tf_efficientnetv2_s", "convnext_tiny"]
+  method: "weighted_soft_vote"                 # soft_vote|weighted_soft_vote|stacking

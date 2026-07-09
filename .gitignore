@@ -1,0 +1,58 @@
+# =============================================================================
+# Raw NLBS dataset — hundreds of GB, never belongs in git.
+# =============================================================================
+/normal/
+/abnormal/
+/False Positive/
+/normal.7z
+
+# =============================================================================
+# Phase 1 — regenerable large/binary artifacts (cache, checkpoints, bundles,
+# logs). Kept OUT of git; small result artifacts (CSV/PNG/PDF/JSON reports)
+# below are intentionally NOT ignored so results/plots stay in history.
+# =============================================================================
+Phase1_DL/outputs/preproc_cache/
+Phase1_DL/outputs/gradcam_images/
+Phase1_DL/outputs/epoch_plots/
+Phase1_DL/outputs/*.npy
+Phase1_DL/outputs/train.pid
+Phase1_DL/outputs/train_group.pid
+Phase1_DL/checkpoints/*.pth
+Phase1_DL/tensorboard/
+Phase1_DL/logs/
+Phase1_DL/colab_bundle/
+
+# Patient-level data (identifiable Patient_ID + Age + diagnosis) — never push
+# to a cloud remote without explicitly confirming NLBS's data-use terms allow
+# it. Code/plots/reports stay in the repo; per-patient label tables do not.
+Phase1_DL/data/metadata.csv
+Phase1_DL/outputs/patient_manifest.csv
+Phase1_DL/outputs/prediction_probabilities.csv
+Phase1_DL/outputs/patient_predictions.csv
+Phase1_DL/outputs/patient_feature_index.csv
+Phase1_DL/outputs/image_feature_index.csv
+NLBSD_Metadata.csv
+
+Phase2_RL/outputs/
+Phase2_RL/checkpoints/*.pth
+Phase2_RL/tensorboard/
+Phase2_RL/logs/
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# =============================================================================
+# OS / editor
+# =============================================================================
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+.~lock.*#

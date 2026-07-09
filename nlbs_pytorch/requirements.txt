@@ -1,0 +1,20 @@
+# NLBS dual-view breast-cancer classification (PyTorch 2.x)
+torch>=2.2
+torchvision>=0.17
+timm>=0.9              # ConvNeXt / EfficientNetV2 backbones
+monai>=1.3            # medical image transforms / utilities
+albumentations>=1.4  # augmentation pipeline
+opencv-python-headless>=4.8
+pydicom>=3.0
+numpy<2.0
+pandas>=2.0
+scikit-learn>=1.3
+scikit-image>=0.22   # breast segmentation (Otsu, morphology)
+optuna>=3.5          # hyperparameter search
+captum>=0.7          # Integrated Gradients
+grad-cam>=1.5        # Grad-CAM / Grad-CAM++ / Score-CAM
+matplotlib>=3.7
+seaborn>=0.12
+tensorboard>=2.15
+pyyaml>=6.0
+tqdm>=4.65
