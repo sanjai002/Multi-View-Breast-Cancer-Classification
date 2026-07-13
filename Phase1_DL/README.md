@@ -1,14 +1,13 @@
-# Phase 1 — Deep Learning Multi-Class Breast Cancer Classification (NLBS)
+# Phase 1 — Deep Learning Binary Breast Cancer Classification (NLBS)
 
 Deep-learning, multi-view mammography classifier for the **Newfoundland and
-Labrador Breast Screening (NLBS)** dataset. Three-class, patient-level
+Labrador Breast Screening (NLBS)** dataset. Binary patient-level
 classification from the four standard screening views (LCC, LMLO, RCC, RMLO):
 
 | Class | Meaning        |
 |:-----:|:---------------|
 | 0     | Normal         |
-| 1     | Cancer         |
-| 2     | False Positive |
+| 1     | Abnormal       |
 
 > This is a **standalone** project. It contains no reinforcement learning. Its
 > exported CNN feature vectors and predictions become the **inputs to Phase 2**
@@ -35,7 +34,7 @@ classification from the four standard screening views (LCC, LMLO, RCC, RMLO):
  {LCC,RCC}         {LMLO,RMLO}
    └────────┬─────────┘
             ▼
-     Attention fusion  →  patient embedding (512-d)  →  MLP head  →  3 logits
+     Attention fusion  →  patient embedding (512-d)  →  MLP head  →  2 logits
 ```
 
 * **Single shared backbone** across views (memory efficient, standard for
@@ -90,12 +89,10 @@ export NLBS_METADATA_CSV=/path/to/metadata.csv   # optional
 ```
 
 Expected metadata columns (spelling variants auto-normalised):
-`Patient_ID, Age, Image_Laterality, View_Position, Cancer, False_Positive, Image_Path`.
+`Patient_ID, Age, Image_Laterality, View_Position, Cancer, Image_Path`.
 
 If no CSV is given, metadata is built by scanning DICOM headers (the
-`Cancer` / `False_Positive` flags then default to 0 and must be supplied from
-ground truth). Patient labels aggregate per-image flags with priority
-**Cancer > False Positive > Normal**.
+`Cancer` flags then default to 0 and must be supplied from ground truth). Patient labels aggregate to binary labels: **Normal=0, Abnormal=1**. False Positive patients are dropped before the patient table is built.
 
 **Splitting is strictly patient-level** (70 / 15 / 15, label-stratified); a
 `Patient_ID` never appears in more than one split.
@@ -127,7 +124,7 @@ Written to `outputs/` and `checkpoints/`:
 | `checkpoints/feature_extractor.pth` | Encoder weights (no classifier head) |
 | `outputs/patient_features.npy` | Per-patient embedding `(N, 512)` |
 | `outputs/image_features.npy` | Per-view embedding `(N·4, 512)` |
-| `outputs/patient_feature_index.csv` | Row → patient / split / label / pred |
+| `outputs/patient_feature_index.csv` | Row → patient / split / binary label / pred |
 | `outputs/image_feature_index.csv` | Row → patient / view / split / present |
 | `outputs/prediction_probabilities.csv` | Per-patient class probabilities |
 | `outputs/patient_predictions.csv` | Per-patient predicted vs. true class |

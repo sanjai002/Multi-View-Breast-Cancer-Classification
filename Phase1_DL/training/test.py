@@ -49,8 +49,9 @@ from explainability.integrated_gradients import IntegratedGradients
 from explainability.scorecam import ScoreCAM
 from models.fusion import build_model
 from training.validate import evaluate
-from utils import (build_patient_table, get_device, get_logger, load_metadata,
-                   overlay_heatmap, patient_level_split)
+from utils import (build_patient_table, balance_patient_table, get_device,
+                   get_logger, load_metadata, overlay_heatmap,
+                   patient_level_split)
 
 
 # --------------------------------------------------------------------------- #
@@ -75,13 +76,25 @@ def load_trained_model(cfg: Config, device: torch.device, logger) -> torch.nn.Mo
 
 
 def load_tables(cfg: Config, logger) -> pd.DataFrame:
-    """Reuse the training manifest if present, else rebuild the split."""
-    if os.path.isfile(cfg.paths.manifest_csv):
-        logger.info("Loading split manifest: %s", cfg.paths.manifest_csv)
-        return pd.read_csv(cfg.paths.manifest_csv)
-    logger.warning("Manifest missing; rebuilding patient split.")
+    """Reuse a compatible binary manifest if present, else rebuild the split."""
     df = load_metadata(cfg, logger)
     table = build_patient_table(df, cfg, logger)
+    table = balance_patient_table(table, cfg, logger)
+
+    if os.path.isfile(cfg.paths.manifest_csv):
+        cached = pd.read_csv(cfg.paths.manifest_csv)
+        compatible_patients = set(cached["Patient_ID"].astype(str)) == set(
+            table["Patient_ID"].astype(str)
+        )
+        compatible_labels = set(cached.get("label", pd.Series(dtype=int)).astype(int)).issubset(
+            set(range(cfg.data.num_classes))
+        )
+        if "split" in cached.columns and compatible_patients and compatible_labels:
+            logger.info("Loading split manifest: %s", cfg.paths.manifest_csv)
+            return cached
+        logger.warning("Ignoring stale or incompatible split manifest: %s", cfg.paths.manifest_csv)
+
+    logger.warning("Manifest missing or incompatible; rebuilding patient split.")
     return patient_level_split(table, cfg, logger)
 
 

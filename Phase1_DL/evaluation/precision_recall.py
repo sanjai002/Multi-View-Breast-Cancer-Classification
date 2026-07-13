@@ -1,4 +1,4 @@
-"""Multi-class precision-recall curve plotting (one-vs-rest)."""
+"""Binary/multi-class precision-recall curve plotting (one-vs-rest)."""
 
 from __future__ import annotations
 

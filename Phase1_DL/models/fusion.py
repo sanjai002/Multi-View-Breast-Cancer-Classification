@@ -9,7 +9,7 @@ Architecture
 * **Dual branch fusion**: a *CC branch* fuses {LCC, RCC} and an *MLO branch*
   fuses {LMLO, RMLO}, each with masked gated **attention pooling**.
 * A final **attention fusion** combines the two branch embeddings into a single
-  patient embedding, which a small MLP head maps to the three classes.
+  patient embedding, which a small MLP head maps to the two binary classes.
 
 The forward pass returns the logits, the patient embedding and the per-view
 embeddings; the latter two are exported for Phase 2 (RL).
@@ -32,7 +32,7 @@ MLO_INDICES: List[int] = [1, 3]   # LMLO, RMLO
 
 
 class MultiViewFusionModel(nn.Module):
-    """Full patient-level three-class classifier over four mammography views."""
+    """Full patient-level binary classifier over four mammography views."""
 
     def __init__(self, cfg: Config) -> None:
         super().__init__()

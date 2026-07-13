@@ -7,7 +7,7 @@ Chosen for feasibility on 8 cores / ~9 GB RAM / limited disk with no GPU:
     skip DICOM decoding entirely
   * SAM OFF (it doubles forward/backward cost; re-enable on a GPU)
   * Focal loss + inverse-frequency class weights for the strong imbalance
-    (Normal 4332 / FalsePositive 1516 / Cancer 149 patients)
+    (balanced Normal / Abnormal patient subsets)
 
 Everything else (EMA, cosine schedule, progressive unfreezing, differential LRs,
 early stopping, TensorBoard) is unchanged from the full method.
@@ -41,7 +41,7 @@ def main() -> None:
     cfg.data.cache_preprocessed = True
     # Balanced sampler OFF: stacking it with class-weighted focal loss double-
     # compensates for imbalance and collapses the model to always predicting
-    # one minority class (confirmed: epoch 0 -> always FalsePositive, epoch 1+
+    # one minority class
     # -> always Cancer, AUC=0.5, macroF1 near-zero). Class weighting alone in
     # the loss is enough; pick one compensation mechanism, not both.
     cfg.data.use_balanced_sampler = False
