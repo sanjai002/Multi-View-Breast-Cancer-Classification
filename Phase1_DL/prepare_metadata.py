@@ -1,16 +1,15 @@
 """Adapter: build the pipeline's metadata CSV from the raw NLBS export.
 
 The raw ``NLBSD_Metadata.csv`` uses Windows-style ``File Path`` values and
-encodes the class in the *top-level folder* (``normal`` / ``abnormal`` /
-``False Positive``) rather than in a single label column. This script converts it
-into the schema the rest of Phase 1 expects:
+encodes the class in the top-level folder. This script keeps only the
+``normal`` and ``abnormal`` folders, drops screening-error folders, and converts
+the remaining records into the schema the rest of Phase 1 expects:
 
-    Patient_ID, Age, Image_Laterality, View_Position, Cancer, False_Positive, Image_Path
+    Patient_ID, Age, Image_Laterality, View_Position, Cancer, Image_Path
 
 Label mapping (from the folder):
-    normal          -> Normal   (Cancer=0, False_Positive=0)
-    abnormal        -> Cancer   (Cancer=1, False_Positive=0)
-    False Positive  -> FalsePos (Cancer=0, False_Positive=1)
+    normal          -> Normal   (Cancer=0)
+    abnormal        -> Abnormal (Cancer=1)
 
 Run::
 
@@ -25,7 +24,8 @@ import os
 
 import pandas as pd
 
-FOLDER_TO_LABEL = {"normal": 0, "abnormal": 1, "false positive": 2}
+FOLDER_TO_LABEL = {"normal": 0, "abnormal": 1}
+FALSE_POSITIVE_FOLDER = "false positive"
 
 
 def build(source: str, data_root: str, out: str, verify: bool = True) -> pd.DataFrame:
@@ -36,14 +36,23 @@ def build(source: str, data_root: str, out: str, verify: bool = True) -> pd.Data
     top = rel.str.split("/").str[0].str.strip().str.lower()
     patient = rel.str.split("/").str[1]
 
-    label = top.map(FOLDER_TO_LABEL)
-    unknown = label.isna()
-    if unknown.any():
+    known = top.isin(set(FOLDER_TO_LABEL) | {FALSE_POSITIVE_FOLDER})
+    if not known.all():
         raise ValueError(
-            f"{int(unknown.sum())} rows have an unrecognised top-level folder: "
-            f"{sorted(top[unknown].unique())}"
+            f"{int((~known).sum())} rows have an unrecognised top-level folder: "
+            f"{sorted(top[~known].unique())}"
         )
-    label = label.astype(int)
+    keep = top.isin(FOLDER_TO_LABEL)
+    dropped = int((top == FALSE_POSITIVE_FOLDER).sum())
+    if dropped:
+        print(
+            f"[info] Dropping {dropped} false-positive rows before metadata export."
+        )
+    df = df[keep].reset_index(drop=True)
+    rel = rel[keep].reset_index(drop=True)
+    top = top[keep].reset_index(drop=True)
+    patient = patient[keep].reset_index(drop=True)
+    label = top.map(FOLDER_TO_LABEL).astype(int)
 
     out_df = pd.DataFrame({
         "Patient_ID": top + "_" + patient,          # unique across folders
@@ -51,7 +60,6 @@ def build(source: str, data_root: str, out: str, verify: bool = True) -> pd.Data
         "Image_Laterality": df["Image Laterality"].astype(str).str.strip().str.upper().str[0],
         "View_Position": df["View Position"].astype(str).str.strip().str.upper(),
         "Cancer": (label == 1).astype(int),
-        "False_Positive": (label == 2).astype(int),
         "Image_Path": [os.path.join(data_root, p) for p in rel],
     })
 
@@ -67,11 +75,11 @@ def build(source: str, data_root: str, out: str, verify: bool = True) -> pd.Data
 
     n_patients = out_df["Patient_ID"].nunique()
     print(f"Wrote {out}: {len(out_df)} images, {n_patients} patients")
-    print("Per-image class counts (0=Normal,1=Cancer,2=FalsePositive):")
-    cls = out_df["Cancer"].mul(1).add(out_df["False_Positive"].mul(2))
+    print("Per-image class counts (0=Normal,1=Abnormal):")
+    cls = out_df["Cancer"].astype(int)
     print(cls.value_counts().sort_index().to_dict())
     per_patient = out_df.groupby("Patient_ID").apply(
-        lambda g: 1 if g["Cancer"].max() else (2 if g["False_Positive"].max() else 0),
+        lambda g: 1 if g["Cancer"].max() else 0,
         include_groups=False,
     )
     print("Per-patient class counts:", per_patient.value_counts().sort_index().to_dict())

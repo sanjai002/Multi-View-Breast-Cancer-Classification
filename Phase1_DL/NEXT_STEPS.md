@@ -366,7 +366,7 @@ so you can test both).
 
 ### "A few DICOM files fail to read" (warnings in the log)
 Expected — a handful of source files in this dataset are corrupted/truncated
-(e.g. `False Positive/p_5240/.../IM-0252-...dcm` — "pixel data less than
+(e.g. `excluded screening-error folder/p_5240/.../IM-0252-...dcm` — "pixel data less than
 expected"). The loader catches this, logs a warning, and substitutes a
 zero-filled masked view for that one view — it does not crash training and
 does not silently corrupt other patients' data. Safe to ignore unless the

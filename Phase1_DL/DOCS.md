@@ -1,19 +1,19 @@
-# Project Documentation — Deep-Learning Multi-View Breast Cancer Classification (NLBS)
+# Project Documentation — Deep-Learning Multi-View Binary Breast Cancer Classification (NLBS)
 
 **Everything needed to write up Phase 1 for publication.** This document
 describes the dataset, methodology, architecture, training protocol, evaluation
 and reproducibility details, and points to exactly which generated file supplies
 each number/figure in a paper.
 
-> **Title (Phase 1):** *Deep Learning Based Multi-Class Breast Cancer
+> **Title (Phase 1):** *Deep Learning Based Binary Breast Cancer
 > Classification using Multi-View Mammography Images from the NLBS Dataset.*
 
 ---
 
 ## 1. Overview / contribution
 
-We classify screening mammography **at the patient level** into three classes —
-**Normal, Cancer, False Positive** — from the four standard views (L-CC, L-MLO,
+We classify screening mammography **at the patient level** into two classes —
+**Normal and Abnormal/Cancer** — from the four standard views (L-CC, L-MLO,
 R-CC, R-MLO). The model is a **multi-view convolutional network** with a shared
 ResNet-50 encoder, squeeze-and-excitation channel attention, and a **dual-branch
 (CC / MLO) attention-fusion** head. The learned per-patient feature vectors are
@@ -22,10 +22,10 @@ learning phase (Phase 2).
 
 Key methodological points a reviewer will look for, and how we address them:
 - **Patient-level data splitting** (no image-level leakage across train/val/test).
-- **Severe class imbalance** handled with class-weighted focal loss + balanced
-  minority oversampling, and **evaluated with imbalance-aware metrics** (macro-F1,
-  balanced accuracy, per-class sensitivity/specificity, ROC-AUC) rather than
-  accuracy.
+- **Class balance** enforced by dropping false-positive patients and undersampling
+  the larger of Normal/Abnormal before patient-level splitting; evaluation still
+  uses imbalance-aware metrics (macro-F1, balanced accuracy, per-class
+  sensitivity/specificity, ROC-AUC) rather than accuracy alone.
 - **Transfer learning** with progressive unfreezing and differential learning
   rates.
 - **Explainability** (Grad-CAM, Grad-CAM++, Score-CAM, Integrated Gradients).
@@ -36,20 +36,19 @@ Key methodological points a reviewer will look for, and how we address them:
 ## 2. Dataset — Newfoundland & Labrador Breast Screening (NLBS)
 
 - **Format:** DICOM (uncompressed MONOCHROME2; typical size ≈ 3000 × 2400).
-- **Organisation:** `{normal, abnormal, False Positive}/p_XXXX/{left,left-c,right,right-c}/{CC,MLO}/*.dcm`.
+- **Organisation:** `{normal, abnormal}/p_XXXX/{left,left-c,right,right-c}/{CC,MLO}/*.dcm`.
   The **top-level folder is the ground-truth class label**.
 - **Metadata:** `NLBSD_Metadata.csv` (per-image: File Path, Image Laterality,
   View Position, Age, Window Center/Width, Cancer flag, "Hard to State Negative").
 - **Class mapping used** (`prepare_metadata.py`): `normal → Normal (0)`,
-  `abnormal → Cancer (1)`, `False Positive → FalsePositive (2)`. Patient-level
-  label aggregation priority is **Cancer > False Positive > Normal**.
+  `abnormal → Abnormal/Cancer (1)`. False Positive patients are excluded before patient-level aggregation.
 
 ### Cohort statistics (as used)
 | | Patients | Images (raw) | Images used by model |
 |---|---:|---:|---:|
 | **Total** | 5,997 | 26,988 | 23,816 |
 | Normal | 4,332 | 19,942 | — |
-| False Positive | 1,516 | 6,394 | — |
+| excluded false-positive | 1,516 | 6,394 | — |
 | Cancer | 149 | 652 | — |
 
 - The model uses **one image per view slot** per patient (LCC/LMLO/RCC/RMLO);
@@ -59,11 +58,11 @@ Key methodological points a reviewer will look for, and how we address them:
   skips them (blank masked view), so they neither crash training nor bias it.
 
 ### Splits (patient-level, label-stratified, seed = 42)
-| Split | Patients | Normal | Cancer | FalsePositive |
-|---|---:|---:|---:|---:|
-| Train (70%) | 4,197 | 3,032 | 104 | 1,061 |
-| Val (15%) | 900 | 650 | 22 | 228 |
-| Test (15%) | 900 | 650 | 23 | 227 |
+| Split | Patients | Normal | Abnormal |
+|---|---:|---:|---:|
+| Train (70%) | balanced | balanced | balanced |
+| Val (15%) | balanced | balanced | balanced |
+| Test (15%) | balanced | balanced | balanced |
 
 The exact assignment is saved to `outputs/patient_manifest.csv` (a `split`
 column per `Patient_ID`) — cite this for reproducibility.
@@ -113,7 +112,7 @@ multi-view tensor with interpolated labels. Validation/test use no augmentation.
                     └─────────────────────────┬─────────────────────────┘
                               attention fusion over the 2 branch embeddings
                                         │
-                              patient embedding (512-d) ─► MLP head ─► 3 logits
+                              patient embedding (512-d) ─► MLP head ─► 2 logits
 ```
 
 - **Shared encoder** across views (parameter-efficient, standard for multi-view
@@ -134,8 +133,8 @@ multi-view tensor with interpolated labels. Validation/test use no augmentation.
 | Component | Setting (CPU run) | Full/GPU config |
 |---|---|---|
 | Loss | **Focal loss (γ=2)** + inverse-freq class weights | same |
-| Class weights | Normal 0.09 · Cancer 2.65 · FalsePositive 0.26 | same |
-| Imbalance sampler | **WeightedRandomSampler** (balanced) | same |
+| Class weights | computed from the balanced training split | same |
+| Sampler | shuffled balanced source table | same |
 | Optimizer | AdamW | AdamW wrapped in **SAM** |
 | LR schedule | cosine annealing + 3-epoch warm-up | same |
 | Differential LR | head 3e-4 / backbone 3e-5 | same |
@@ -145,10 +144,11 @@ multi-view tensor with interpolated labels. Validation/test use no augmentation.
 | Image size / batch | 224 / 4 | 512 / 8 |
 | Model selection | best **val macro-F1**; early stopping patience 12 | same |
 
-**Class-imbalance strategy (important for the paper).** Three complementary
-mechanisms: (i) inverse-frequency **class weighting** in the loss; (ii) **focal
-loss** down-weighting easy majority examples; (iii) a **balanced sampler** so each
-mini-batch contains Cancer/FalsePositive cases. Model selection and reporting use
+**Binary balance strategy (important for the paper).** Screening-error patients
+are excluded, then the larger of Normal/Abnormal is undersampled with the data
+seed before splitting. Focal loss and optional class weighting remain available;
+the balanced sampler is normally disabled because the split source table is
+already balanced. Model selection and reporting use
 **macro-averaged / per-class** metrics, never raw accuracy.
 
 Per-epoch artefacts for the write-up: `outputs/metrics_history.csv`,
@@ -159,7 +159,7 @@ and `checkpoints/epoch_XXX.pth`.
 
 ## 7. Evaluation protocol (`evaluation/`, `training/test.py`)
 
-Held-out **test set (900 patients)**, evaluated once with the best checkpoint.
+The held-out **test set** is evaluated once with the best checkpoint.
 Metrics: accuracy, balanced accuracy, macro/weighted precision-recall-F1,
 per-class **sensitivity & specificity**, one-vs-rest **ROC-AUC** (macro & micro),
 average precision, Cohen's κ, and **calibration** (reliability curves + ECE).
@@ -219,12 +219,11 @@ Generated for a sample of test patients by `training/test.py` into
 | Macro ROC-AUC | ⟨fill⟩ |
 | Cohen's κ | ⟨fill⟩ |
 
-**Per class (Normal / Cancer / FalsePositive):**
+**Per class (Normal / Abnormal):**
 | Class | Precision | Recall (Sens.) | Specificity | F1 | AUC |
 |---|---|---|---|---|---|
 | Normal | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ |
-| Cancer | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ |
-| FalsePositive | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ |
+| Abnormal | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ | ⟨⟩ |
 
 ---
 

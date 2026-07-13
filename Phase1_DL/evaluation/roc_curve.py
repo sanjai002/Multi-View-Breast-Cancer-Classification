@@ -1,4 +1,4 @@
-"""Multi-class ROC curve plotting (one-vs-rest, with micro/macro averages)."""
+"""Binary/multi-class ROC curve plotting (one-vs-rest, with micro/macro averages)."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def plot_roc_curves(y_true: Sequence[int], y_prob: np.ndarray,
                 label=f"micro-average (AUC={auc(fpr_micro, tpr_micro):.3f})")
 
     ax.plot([0, 1], [0, 1], color="navy", lw=1, linestyle="--", alpha=0.6)
-    ax.set(xlim=(0, 1), ylim=(0, 1.02), xlabel="False Positive Rate",
+    ax.set(xlim=(0, 1), ylim=(0, 1.02), xlabel="FPR",
            ylabel="True Positive Rate", title="ROC curves (one-vs-rest)")
     ax.legend(loc="lower right", fontsize=9)
     fig.tight_layout()

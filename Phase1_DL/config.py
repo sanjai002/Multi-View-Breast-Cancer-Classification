@@ -80,12 +80,11 @@ class DataConfig:
     col_laterality: str = "Image_Laterality"
     col_view: str = "View_Position"
     col_cancer: str = "Cancer"
-    col_false_positive: str = "False_Positive"
     col_path: str = "Image_Path"
 
-    # Three-class problem: 0=Normal, 1=Cancer, 2=False Positive.
-    num_classes: int = 3
-    class_names: Tuple[str, ...] = ("Normal", "Cancer", "FalsePositive")
+    # Binary problem: 0=Normal, 1=Abnormal/Cancer.
+    num_classes: int = 2
+    class_names: Tuple[str, ...] = ("Normal", "Abnormal")
 
     image_size: int = 512          # square side length fed to the network
     in_channels: int = 1           # mammograms are grayscale; conv1 is adapted
@@ -110,9 +109,9 @@ class DataConfig:
     num_workers: int = 4
     pin_memory: bool = True
 
-    # Oversample minority classes so every batch contains Cancer / FalsePositive
-    # examples (on top of the class-weighted loss). Strongly recommended for the
-    # heavily imbalanced NLBS data.
+    # Optionally oversample minority-class examples on top of the class-weighted
+    # loss. The patient table is already balanced before splitting, so this is
+    # usually unnecessary.
     use_balanced_sampler: bool = False
 
     # Optional on-disk cache of preprocessed views (npy). Off by default to
@@ -180,7 +179,7 @@ class TrainConfig:
     ema_decay: float = 0.999
 
     # Loss. Both are implemented; "focal" is the recommended default for the
-    # imbalanced three-class NLBS problem.
+    # binary NLBS problem.
     loss: str = "focal"            # "focal" | "weighted_ce"
     focal_gamma: float = 2.0
     class_weighting: bool = True   # weight the loss by inverse class frequency

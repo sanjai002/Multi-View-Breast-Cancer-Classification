@@ -42,7 +42,8 @@ from training.validate import evaluate
 from utils import (AverageMeter, amp_settings, autocast_context, build_loss,
                    compute_class_weights, count_parameters, get_device,
                    get_logger, load_metadata, build_patient_table,
-                   patient_level_split, save_checkpoint, set_seed)
+                   balance_patient_table, patient_level_split, save_checkpoint,
+                   set_seed)
 
 
 class Trainer:
@@ -81,6 +82,7 @@ class Trainer:
         cfg = self.cfg
         df = load_metadata(cfg, self.logger)
         table = build_patient_table(df, cfg, self.logger)
+        table = balance_patient_table(table, cfg, self.logger)
 
         # Reuse an existing split manifest if one covers the same patients,
         # rather than re-deriving it. This guarantees the train/val/test patient

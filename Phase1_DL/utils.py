@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from config import Config
 
 LOGGER_NAME = "phase1"
+FALSE_POSITIVE_COL = "False_Positive"
 
 
 # --------------------------------------------------------------------------- #
@@ -95,8 +96,8 @@ _COLUMN_ALIASES: Dict[str, str] = {
     "view position": "View_Position", "view_position": "View_Position",
     "view": "View_Position", "viewposition": "View_Position",
     "cancer": "Cancer", "malignant": "Cancer",
-    "false positive": "False_Positive", "false_positive": "False_Positive",
-    "falsepositive": "False_Positive", "fp": "False_Positive",
+    "false positive": FALSE_POSITIVE_COL, "false_positive": FALSE_POSITIVE_COL,
+    "falsepositive": FALSE_POSITIVE_COL, "fp": FALSE_POSITIVE_COL,
     "image path": "Image_Path", "image_path": "Image_Path", "path": "Image_Path",
     "filename": "Image_Path", "file": "Image_Path",
 }
@@ -123,7 +124,7 @@ def normalise_metadata(df: pd.DataFrame) -> pd.DataFrame:
             {"CRANIOCAUDAL": "CC", "MEDIOLATERALOBLIQUE": "MLO", "ML": "MLO"}
         )
     # Coerce binary flags.
-    for c in ("Cancer", "False_Positive"):
+    for c in ("Cancer", FALSE_POSITIVE_COL):
         if c in df.columns:
             df[c] = (
                 pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int).clip(0, 1)
@@ -136,8 +137,8 @@ def build_metadata_from_directory(data_root: str,
     """Scan ``data_root`` recursively and build a metadata table from DICOM tags.
 
     Used as a fallback when no metadata CSV is provided. Reads only headers
-    (``stop_before_pixels=True``) so it is fast and memory efficient. Cancer /
-    False_Positive default to 0 and should be corrected with ground-truth labels.
+    (``stop_before_pixels=True``) so it is fast and memory efficient. Cancer
+    defaults to 0 and should be corrected with ground-truth labels.
     """
     import pydicom
 
@@ -161,7 +162,7 @@ def build_metadata_from_directory(data_root: str,
                     "Image_Laterality": lat,
                     "View_Position": view,
                     "Cancer": 0,
-                    "False_Positive": 0,
+                    FALSE_POSITIVE_COL: 0,
                     "Image_Path": fpath,
                 }
             )
@@ -202,7 +203,7 @@ def load_metadata(cfg: Config, logger: Optional[logging.Logger] = None) -> pd.Da
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Metadata missing required columns: {missing}")
-    for c in ("Cancer", "False_Positive"):
+    for c in ("Cancer", FALSE_POSITIVE_COL):
         if c not in df.columns:
             df[c] = 0
     if "Age" not in df.columns:
@@ -213,17 +214,41 @@ def load_metadata(cfg: Config, logger: Optional[logging.Logger] = None) -> pd.Da
 # --------------------------------------------------------------------------- #
 # Patient-level table & labels
 # --------------------------------------------------------------------------- #
-def patient_label(cancer_any: int, fp_any: int) -> int:
-    """Aggregate per-image flags into a single patient class.
+def patient_label(cancer_any: int) -> int:
+    """Aggregate per-image flags into a binary patient class.
 
-    Priority: Cancer (1) > False Positive (2) > Normal (0). Cancer dominates so
-    that a screening error never masks a true malignancy.
+    Normal patients are labelled 0 and Cancer/Abnormal patients are labelled 1.
+    False-positive patients are filtered before patient aggregation and therefore
+    never receive a patient label.
     """
-    if cancer_any:
-        return 1
-    if fp_any:
-        return 2
-    return 0
+    return 1 if cancer_any else 0
+
+
+def balance_patient_table(table: pd.DataFrame, cfg: Config,
+                          logger: Optional[logging.Logger] = None) -> pd.DataFrame:
+    """Undersample the larger binary class before patient-level splitting."""
+    log = logger or get_logger()
+    counts = table["label"].value_counts().sort_index()
+    missing = [i for i in range(cfg.data.num_classes) if counts.get(i, 0) == 0]
+    if missing:
+        raise ValueError(f"Cannot balance dataset; missing class labels: {missing}")
+    target = int(counts.min())
+    balanced = (
+        pd.concat(
+            [
+                group.sample(n=target, random_state=cfg.data.seed)
+                for _, group in table.groupby("label", sort=True)
+            ],
+            ignore_index=True,
+        )
+        .sample(frac=1.0, random_state=cfg.data.seed)
+        .reset_index(drop=True)
+    )
+    log.info(
+        "Balanced patient table: %d patients | class counts %s",
+        len(balanced), balanced["label"].value_counts().sort_index().to_dict(),
+    )
+    return balanced
 
 
 def build_patient_table(df: pd.DataFrame,
@@ -236,6 +261,19 @@ def build_patient_table(df: pd.DataFrame,
     masked out downstream.
     """
     log = logger or get_logger()
+    if FALSE_POSITIVE_COL in df.columns:
+        flagged = df[FALSE_POSITIVE_COL].astype(int) == 1
+        fp_patients = set(df.loc[flagged, "Patient_ID"].astype(str))
+        if fp_patients:
+            before_rows = len(df)
+            before_patients = df["Patient_ID"].nunique()
+            df = df[~df["Patient_ID"].astype(str).isin(fp_patients)].copy()
+            log.info(
+                "Removed %d false-positive patients (%d images) before patient aggregation",
+                before_patients - df["Patient_ID"].nunique(),
+                before_rows - len(df),
+            )
+
     view_key = df["Image_Laterality"].astype(str) + df["View_Position"].astype(str)
     df = df.assign(_view_key=view_key)
 
@@ -244,8 +282,7 @@ def build_patient_table(df: pd.DataFrame,
         rec: Dict = {"Patient_ID": str(pid)}
         rec["Age"] = float(pd.to_numeric(group["Age"], errors="coerce").mean())
         cancer_any = int(group["Cancer"].max()) if "Cancer" in group else 0
-        fp_any = int(group["False_Positive"].max()) if "False_Positive" in group else 0
-        rec["label"] = patient_label(cancer_any, fp_any)
+        rec["label"] = patient_label(cancer_any)
         for view in cfg.data.view_order:
             matches = group.loc[group["_view_key"] == view, "Image_Path"].tolist()
             rec[f"path_{view}"] = matches[0] if matches else np.nan
@@ -328,10 +365,10 @@ def compute_class_weights(labels: Sequence[int], num_classes: int,
 # Loss functions
 # --------------------------------------------------------------------------- #
 class FocalLoss(nn.Module):
-    """Multi-class focal loss (Lin et al., 2017) with optional class weights.
+    """Focal loss (Lin et al., 2017) with optional class weights.
 
     ``FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)``. Down-weights easy
-    examples, which is well suited to the imbalanced NLBS three-class problem.
+    examples, which is useful for the binary NLBS problem.
     """
 
     def __init__(self, gamma: float = 2.0,
