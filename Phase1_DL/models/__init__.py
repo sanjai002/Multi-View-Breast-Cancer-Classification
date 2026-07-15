@@ -1,13 +1,13 @@
-"""Model components for the multi-view NLBS classifier."""
+"""Model architectures for breast cancer detection."""
 
-from models.attention import AttentionPooling, SEBlock
-from models.fusion import MultiViewFusionModel, build_model
-from models.resnet50 import ResNet50Backbone
+from models.classifier import (
+    MultiViewMammographyClassifier,
+    AttentionFusionHead,
+    build_model,
+)
 
 __all__ = [
-    "AttentionPooling",
-    "SEBlock",
-    "ResNet50Backbone",
-    "MultiViewFusionModel",
+    "MultiViewMammographyClassifier",
+    "AttentionFusionHead",
     "build_model",
 ]

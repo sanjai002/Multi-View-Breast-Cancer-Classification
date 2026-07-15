@@ -11,16 +11,23 @@
 # logs). Kept OUT of git; small result artifacts (CSV/PNG/PDF/JSON reports)
 # below are intentionally NOT ignored so results/plots stay in history.
 # =============================================================================
+Phase1_DL/outputs/cache/
 Phase1_DL/outputs/preproc_cache/
 Phase1_DL/outputs/gradcam_images/
 Phase1_DL/outputs/epoch_plots/
 Phase1_DL/outputs/*.npy
+Phase1_DL/outputs/cache_origin.txt
+Phase1_DL/outputs/metadata_balanced.csv
+Phase1_DL/outputs/patient_manifest_balanced.csv
+Phase1_DL/outputs/patient_manifest_*.csv
+Phase1_DL/outputs/metadata_*.csv
 Phase1_DL/outputs/train.pid
 Phase1_DL/outputs/train_group.pid
 Phase1_DL/checkpoints/*.pth
 Phase1_DL/tensorboard/
 Phase1_DL/logs/
 Phase1_DL/colab_bundle/
+colab_bundle/
 
 # Patient-level data (identifiable Patient_ID + Age + diagnosis) — never push
 # to a cloud remote without explicitly confirming NLBS's data-use terms allow

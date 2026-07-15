@@ -1,163 +1,191 @@
-# Phase 1 — Deep Learning Binary Breast Cancer Classification (NLBS)
+# Phase 1 DL Pipeline
 
-Deep-learning, multi-view mammography classifier for the **Newfoundland and
-Labrador Breast Screening (NLBS)** dataset. Binary patient-level
-classification from the four standard screening views (LCC, LMLO, RCC, RMLO):
+This document describes the current Phase 1 deep learning pipeline for the breast cancer detection project.
+It covers dataset layout, metadata, caching, training/test split behavior, and the exact commands to run the pipeline locally and in Colab.
 
-| Class | Meaning        |
-|:-----:|:---------------|
-| 0     | Normal         |
-| 1     | Abnormal       |
+## Project structure
 
-> This is a **standalone** project. It contains no reinforcement learning. Its
-> exported CNN feature vectors and predictions become the **inputs to Phase 2**
-> (`../Phase2_RL/`).
+- `Phase1_DL/`
+  - `config/` — configuration dataclasses for preprocessing, data, model, and training.
+  - `preprocessing/` — DICOM decoding, breast segmentation, orientation normalization, intensity normalization, and preprocessing pipeline.
+  - `cache_system/` — deterministic cache key generation, cache file path resolution, and cache generation logic.
+  - `metadata/` — image-level metadata scanning and patient-level manifest building.
+  - `datasets/` — cached PyTorch dataset implementation that reads only `.npy` cache files.
+  - `models/` — small fusion model proof-of-concept.
+  - `scripts/` — test scripts and cache generation tools.
+  - `outputs/` — generated cache, manifests, checkpoints, tensorboard logs, and helper files.
 
----
+## Data sources
 
-## 1. Architecture
+- `Phase1_DL/data/metadata.csv` is the primary image-level metadata file.
+- It currently contains `26988` image rows and `5997` unique patients.
+- Each row includes:
+  - `Patient_ID`
+  - `Age`
+  - `Image_Laterality` (L or R)
+  - `View_Position` (CC, MLO)
+  - `Cancer` (0 normal, 1 abnormal)
+  - `Image_Path` (absolute DICOM path)
 
-```
-          LCC  LMLO  RCC  RMLO            (4 DICOM views / patient)
-            │    │    │    │
-            ▼    ▼    ▼    ▼
-     ┌───────────────────────────┐
-     │  Shared ResNet-50 backbone │  ImageNet-pretrained, conv1 adapted to 1ch
-     └───────────────────────────┘
-            │ (per-view 2048-d feature map)
-            ▼
-        SE block  →  GAP  →  Linear projection  →  per-view embedding (512-d)
-            │
-   ┌────────┴─────────┐        Dual-branch multi-view fusion
-   ▼                  ▼
- CC branch         MLO branch    (masked gated attention pooling)
- {LCC,RCC}         {LMLO,RMLO}
-   └────────┬─────────┘
-            ▼
-     Attention fusion  →  patient embedding (512-d)  →  MLP head  →  2 logits
-```
+## Patient manifest
 
-* **Single shared backbone** across views (memory efficient, standard for
-  multi-view mammography) — enables clean per-view Grad-CAM in one pass.
-* **SE blocks** recalibrate channels; **gated attention pooling** fuses views
-  and branches while **masking missing views**.
-* Missing views are zero-filled and excluded via the attention mask, so patients
-  with fewer than four views are handled gracefully.
+- `Phase1_DL/outputs/patient_manifest.csv` is the patient-level manifest generated from the image-level metadata.
+- It contains one row per patient with the following fields:
+  - `Patient_ID`
+  - `Age`
+  - `Cancer`
+  - `path_LCC`, `path_LMLO`, `path_RCC`, `path_RMLO`
+  - `n_LCC`, `n_LMLO`, `n_RCC`, `n_RMLO`
+- Current manifest counts:
+  - `5997` total patients
+  - `149` abnormal patients
+  - `5848` normal patients
 
-## 2. Pipeline highlights
+## Cache design
 
-* **DICOM** (`dicom.py`): VOI LUT windowing, MONOCHROME1 inversion, rescale
-  slope/intercept, robust [0,1] normalisation, compressed transfer-syntax
-  decoding (pylibjpeg / GDCM).
-* **Preprocessing** (`preprocess.py`): CLAHE → breast segmentation
-  (Otsu + largest connected component) → artifact/label removal →
-  black-border crop → aspect-preserving resize → orientation normalisation.
-* **Augmentation** (`augmentation.py`): rotation, affine, brightness, contrast,
-  gamma, random resized crop, Gaussian noise, random erasing (Albumentations) +
-  batch-level **MixUp / CutMix**.
-* **Training** (`training/train.py`): mixed precision (bf16/fp16), **SAM**
-  optimiser, **EMA**, cosine / plateau scheduling with warm-up, gradient
-  clipping, **progressive unfreezing** with **differential learning rates**,
-  early stopping, checkpointing, TensorBoard.
-* **Loss**: Focal (default, recommended) vs. class-weighted cross entropy —
-  switch with `--loss`.
-* **Evaluation**: accuracy, precision, recall, F1, ROC AUC, sensitivity,
-  specificity, confusion matrix, calibration (ECE).
-* **Explainability**: Grad-CAM, Grad-CAM++, Score-CAM, Integrated Gradients.
+### Purpose
 
-## 3. Installation
+- Training must not decode DICOM files during dataset loading.
+- All preprocessing is done once and saved as `.npy` cache files.
+- The dataset loader reads only cached `.npy` files and treats missing views as zero tensors.
+
+### Cache key generation
+
+- Cache keys are deterministic SHA-256 hashes of `relative_path + image_size`.
+- The system supports portability by resolving the data root using either:
+  1. `NLBS_ORIGINAL_DATA_ROOT` environment variable
+  2. `Phase1_DL/outputs/cache_origin.txt`
+  3. fallback to the raw absolute path string
+- This avoids cache misses when the dataset is mounted in a different base directory on Colab.
+
+### Existing cache state
+
+- Currently only `16` cache files were present from the small test run.
+- After the balanced generation step, `1311` cached images are available for the selected cohort.
+
+## Balanced training cohort
+
+- A balanced patient subset was created containing:
+  - `149` abnormal patients
+  - `149` matched normal patients
+- The generated files are:
+  - `Phase1_DL/outputs/patient_manifest_balanced.csv`
+  - `Phase1_DL/outputs/metadata_balanced.csv`
+- Cache generation for this balanced cohort processed `1311` images successfully with `0` failures.
+
+## Scripts
+
+### `scripts/test_cache_and_train.py`
+
+- Builds a small metadata subset from `Phase1_DL/data/metadata.csv`.
+- Generates cache for the first 16 images.
+- Builds the patient manifest if missing.
+- Runs a short PyTorch training loop using cached images only.
+
+### `scripts/generate_balanced_patient_cache.py`
+
+- Selects all abnormal patients and an equal number of normal patients.
+- Writes a balanced patient manifest and metadata CSV.
+- Generates cache for the balanced cohort.
+
+### `prepare_colab_bundle.sh`
+
+- Creates `colab_bundle/code.zip` containing the codebase.
+- Creates `colab_bundle/data_bundle.zip` containing:
+  - `data/metadata.csv`
+  - `data/patient_manifest.csv` (if present)
+  - `data/cache/` with cached `.npy` files
+  - `data/cache_origin.txt`
+
+## How to run locally
+
+### 1. Install dependencies
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Python 3.11
 pip install -r requirements.txt
 ```
 
-Google Colab: upload `Phase1_DL/`, `pip install -r requirements.txt`, then add
-the project root to the path before importing:
+### 2. Generate the patient manifest
 
-```python
-import sys; sys.path.insert(0, "/content/Phase1_DL")
-```
-
-## 4. Data
-
-Point the pipeline at your DICOM root and (optionally) a metadata CSV:
+If `Phase1_DL/outputs/patient_manifest.csv` is missing:
 
 ```bash
-export NLBS_DATA_ROOT=/path/to/NLBS/dicoms
-export NLBS_METADATA_CSV=/path/to/metadata.csv   # optional
+python3 - <<'PY'
+from pathlib import Path
+import pandas as pd
+from config.base import get_config
+from metadata.patient_manifest import PatientManifestBuilder
+cfg = get_config()
+PatientManifestBuilder(cfg).build_manifest(cfg.metadata_csv, cfg.patient_manifest_csv)
+PY
 ```
 
-Expected metadata columns (spelling variants auto-normalised):
-`Patient_ID, Age, Image_Laterality, View_Position, Cancer, Image_Path`.
-
-If no CSV is given, metadata is built by scanning DICOM headers (the
-`Cancer` flags then default to 0 and must be supplied from ground truth). Patient labels aggregate to binary labels: **Normal=0, Abnormal=1**. False Positive patients are dropped before the patient table is built.
-
-**Splitting is strictly patient-level** (70 / 15 / 15, label-stratified); a
-`Patient_ID` never appears in more than one split.
-
-## 5. Usage
+### 3. Generate balanced cache
 
 ```bash
-# Quick smoke test (2 epochs, few patients) to validate the whole pipeline
-python -m training.train --epochs 2 --limit 40
-
-# Full training
-python -m training.train
-
-# Evaluate best checkpoint + export all Phase-1 artefacts
-python -m training.test
-
-# Monitor
-tensorboard --logdir tensorboard/
+python3 scripts/generate_balanced_patient_cache.py
 ```
 
-## 6. Outputs (consumed by Phase 2)
+This creates the balanced metadata and manifest files and caches all images for the selected cohort.
 
-Written to `outputs/` and `checkpoints/`:
+### 4. Run the short training smoke test
 
-| File | Description |
-|------|-------------|
-| `checkpoints/best_model.pth` | Best checkpoint (weights + epoch + config) |
-| `checkpoints/best_weights.pth` | Best model `state_dict` |
-| `checkpoints/feature_extractor.pth` | Encoder weights (no classifier head) |
-| `outputs/patient_features.npy` | Per-patient embedding `(N, 512)` |
-| `outputs/image_features.npy` | Per-view embedding `(N·4, 512)` |
-| `outputs/patient_feature_index.csv` | Row → patient / split / binary label / pred |
-| `outputs/image_feature_index.csv` | Row → patient / view / split / present |
-| `outputs/prediction_probabilities.csv` | Per-patient class probabilities |
-| `outputs/patient_predictions.csv` | Per-patient predicted vs. true class |
-| `outputs/classification_report.pdf` | Full metric report |
-| `outputs/confusion_matrix.png`, `roc_curve.png`, `precision_recall.png`, `calibration_curve.png` | Diagnostic plots |
-| `outputs/gradcam_images/` | Per-patient Grad-CAM/++/Score-CAM/IG overlays |
-
-## 7. Project layout
-
-```
-Phase1_DL/
-├── config.py            # all hyper-parameters (nested dataclasses)
-├── dicom.py             # DICOM reading (VOI LUT, MONOCHROME1, decode)
-├── preprocess.py        # CLAHE, segmentation, artifact removal, orient, resize
-├── augmentation.py      # Albumentations + MixUp / CutMix
-├── dataset.py           # on-demand multi-view Dataset + DataLoaders
-├── utils.py             # logging, seeding, splitting, losses, AMP, checkpoints
-├── models/              # resnet50.py · attention.py · fusion.py
-├── training/            # train.py · validate.py · test.py · callbacks.py
-├── evaluation/          # metrics.py · confusion_matrix.py · roc_curve.py ·
-│                        # precision_recall.py · calibration_curve.py
-├── explainability/      # gradcam.py · gradcam_plus.py · scorecam.py ·
-│                        # integrated_gradients.py
-├── outputs/ checkpoints/ tensorboard/ logs/
-└── requirements.txt
+```bash
+PYTHONPATH=Phase1_DL python3 scripts/test_cache_and_train.py
 ```
 
-## 8. Notes & assumptions
+### 5. Build the Colab bundles
 
-* Grayscale input: ResNet-50 `conv1` is adapted from 3→1 channels by **summing**
-  the pretrained RGB kernels, keeping the pretrained response intact.
-* bf16 mixed precision is preferred (no gradient scaler, composes with SAM);
-  fp16 automatically falls back to a `GradScaler` when SAM is off.
-* Everything is loaded lazily — the full DICOM dataset is never held in RAM.
-* Reproducibility via a single `seed` (NumPy / PyTorch / MONAI / DataLoader
-  workers).
+```bash
+bash prepare_colab_bundle.sh
+```
+
+## How training works in the DL phase
+
+### Dataset loading
+
+- `Phase1_DL/datasets/cached_dataset.py` provides a `CachedMammoDataset` that:
+  - loads patient rows from a manifest CSV
+  - resolves view paths using the cache generator
+  - reads `.npy` files only
+  - returns 4 views in fixed order: `LCC`, `LMLO`, `RCC`, `RMLO`
+  - fills missing views with zeros and uses a binary presence mask
+
+### Model
+
+- A small fusion model proof-of-concept exists in `Phase1_DL/models/simple_fusion.py`.
+- It uses a shared backbone and masked fusion over the four views.
+
+### Training loop
+
+- The current smoke-test training loop uses:
+  - Adam optimizer
+  - Cross-entropy loss
+  - batch size `2`
+  - a few update steps for verification
+- A production training loop is not yet implemented in full, but the current pipeline proves the cache-only workflow.
+
+## Notes and caveats
+
+- The DICOM paths in `Phase1_DL/data/metadata.csv` are absolute. Use `NLBS_ORIGINAL_DATA_ROOT` or `cache_origin.txt` for cross-machine cache portability.
+- Training currently uses a balanced pilot cohort of `298` patients.
+- For full dataset training, generate cache for all image rows in `Phase1_DL/data/metadata.csv` and build a corresponding full patient manifest.
+
+## Useful commands summary
+
+```bash
+# Small smoke test
+PYTHONPATH=Phase1_DL python3 scripts/test_cache_and_train.py
+
+# Balanced cache generation
+python3 scripts/generate_balanced_patient_cache.py
+
+# Build Colab bundle
+bash prepare_colab_bundle.sh
+```
+
+## What to do next
+
+- Add a full training script with split-aware dataset creation, optimizer schedule, checkpointing, and evaluation.
+- Add an explicit stratified train/val/test split in the patient manifest.
+- Add a Colab notebook cell that uses `NLBS_ORIGINAL_DATA_ROOT` and verifies the unpacked cache bundle.
