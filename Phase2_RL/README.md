@@ -1,67 +1,66 @@
-# Phase 2 — Reinforcement Learning (Scaffold Only)
+# Phase 2 — Personalized Screening Intervals via Offline Deep RL
 
-> **Status: NOT IMPLEMENTED.** This directory currently contains only the
-> project structure and this README. The reinforcement-learning implementation
-> will be completed in the **second phase, after approval of Phase 1**.
+Learning a personalized breast-cancer screening schedule from **CSAW-CC**, a
+longitudinal Swedish screening cohort (8,723 patients, 24,694 exams).
 
-Phase 2 builds a reinforcement-learning agent for longitudinal breast-screening
-decision-making. It does **not** re-read DICOM images. Instead it consumes the
-artefacts produced by Phase 1 (`../Phase1_DL/outputs/`) and treats the learned
-CNN representations as the state of a Markov Decision Process (MDP).
+📖 **[DOCUMENTATION.md](DOCUMENTATION.md)** — full reference: data, code, design,
+results, how-to, known problems. Start here.
+🔬 **[METHODOLOGY.md](METHODOLOGY.md)** — the scientific write-up with equations,
+for the paper.
 
-## Inputs (produced by Phase 1)
+## Quickstart
 
-| File | Role in Phase 2 |
-|------|-----------------|
-| `image_features.npy` | Per-view CNN embeddings — fine-grained state features |
-| `patient_features.npy` | Per-patient fused CNN embedding — core state vector |
-| `prediction_probabilities.csv` | Class probabilities — confidence signal in the state / reward |
-| `patient_predictions.csv` | Predicted vs. true class — supervision for reward shaping and evaluation |
-| **Synthetic longitudinal trajectories** | Generated from the above to form multi-step screening episodes |
-
-These files are combined to build the **MDP state representation**: each state
-concatenates a patient's CNN feature vector with the model's prediction
-probabilities and trajectory context; actions are discrete screening / follow-up
-decisions; rewards encode the clinical cost of missed cancers versus unnecessary
-recalls.
-
-## Planned structure
-
-```
-Phase2_RL/
-├── config.py                # RL hyper-parameters
-├── trajectory_generator.py  # synthetic longitudinal trajectories from Phase 1 exports
-├── mdp.py                   # state / action / transition definitions
-├── environment.py           # Gym-style environment over trajectories
-├── reward.py                # clinical reward function
-├── qlearning.py             # tabular / linear Q-learning baseline
-├── dqn.py                   # Deep Q-Network
-├── double_dqn.py            # Double DQN
-├── dueling_dqn.py           # Dueling DQN
-├── replay_buffer.py         # uniform + prioritised experience replay
-├── policy.py                # epsilon-greedy / greedy / softmax policies
-├── inference.py             # roll out a trained policy on new patients
-├── train_rl.py              # training entry point
-├── evaluate_rl.py           # evaluation entry point
-├── utils.py                 # logging, seeding, Phase 1 export loaders
-└── README.md
+```bash
+python data_audit.py                        # verify the dataset
+python data.py                              # -> outputs/buffer.npz
+python train.py --algo cql --steps 20000    # -> outputs/cql_seed0.pt
+python evaluate.py --algo cql --split test  # -> outputs/eval_test.csv
+python simulator.py --quick                 # counterfactual schedules
 ```
 
-## Data flow
+CPU is fine; the whole pipeline is minutes.
 
-```
-Phase 1 (DL)                         Phase 2 (RL)
-────────────                         ────────────
-DICOM → ResNet-50 multi-view  ──►  patient_features.npy ┐
-   fusion classifier          ──►  image_features.npy   ├─► MDP state ─► RL agent
-                              ──►  prediction_*.csv      ┘        (DQN / Double / Dueling)
-                                        │
-                                        └─► synthetic longitudinal trajectories ─► episodes
-```
+## The files
 
-## How to proceed
+| File | Step |
+|---|---|
+| `config.py` | Every cost, γ, and path. Sensitivity analysis = sweep this |
+| `data_audit.py` | Reproduces every empirical claim in the docs |
+| `data.py` | CSV → exams → states → transition buffer |
+| `agent.py` | Networks + BC / DQN / DDQN / Dueling / QR / **CQL** |
+| `train.py` | Offline training, FQE selection, collapse gate |
+| `evaluate.py` | FQE / WIS / ESS / support, clinical metrics, baselines |
+| `simulator.py` | Calibrated natural-history model — the causal arm |
 
-1. Complete and approve **Phase 1**; run `python -m training.test` to generate
-   the exports listed above.
-2. Implement the modules in this directory (deferred until approval).
-3. Train and evaluate the RL agents on the trajectory environment.
+## Status
+
+**Two arms.** The *offline* arm learns from real screening histories but cannot
+show that screening sooner *causes* better outcomes — the logged interval barely
+varied, so the transition kernel does not respond to the action. The *simulator*
+arm supplies that mechanism explicitly and can evaluate schedules nobody was put
+on, including 6-monthly.
+
+**What works.** The data pipeline, the conservative offline agent, the full
+evaluation harness, and a simulator calibrated to CSAW-CC's own screen-detected
+vs interval-cancer stage contrast.
+
+**What doesn't, yet.**
+
+- **OPE cannot rank interval policies.** FQE seed noise exceeds the entire spread
+  between baselines, and ESS ≈ 1.2 of 1,024 trajectories makes WIS useless.
+  Never quote a single-fit FQE ranking.
+- **Recall decisions need images.** No DICOMs on this machine; the learned recall
+  sensitivity is 0.00 against clinicians' 0.76. That gap is the value of the
+  mammogram.
+- **Cost parameters are placeholders.** `c_e` alone decides the optimal interval,
+  so read `simulator.py`'s threshold sweep, not any single row.
+
+See [DOCUMENTATION.md §12](DOCUMENTATION.md#12-known-problems-and-open-work) for
+the full list, and [§13](DOCUMENTATION.md#13-traps-that-have-already-bitten) for
+the failure modes that have already produced plausible-looking wrong answers.
+
+## Licence obligation
+
+CSAW-CC is CC BY with a **binding ICMJE condition to invite the data curators
+(Fredrik Strand, Karolinska Institutet) as co-authors.** Contact them before
+submission.

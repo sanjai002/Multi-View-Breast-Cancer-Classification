@@ -1,49 +1,58 @@
 # =============================================================================
-# Raw NLBS dataset — hundreds of GB, never belongs in git.
+# Datasets — never belong in git.
+#
+# This repo has a public GitHub remote, so anything committed here is published.
+# Raw imaging data is hundreds of GB and, more importantly, is patient data.
 # =============================================================================
+
+# NLBS (Phase 1, retired) — guards kept in case the data is restored locally.
 /normal/
 /abnormal/
 /False Positive/
 /normal.7z
-
-# =============================================================================
-# Phase 1 — regenerable large/binary artifacts (cache, checkpoints, bundles,
-# logs). Kept OUT of git; small result artifacts (CSV/PNG/PDF/JSON reports)
-# below are intentionally NOT ignored so results/plots stay in history.
-# =============================================================================
-Phase1_DL/outputs/cache/
-Phase1_DL/outputs/preproc_cache/
-Phase1_DL/outputs/gradcam_images/
-Phase1_DL/outputs/epoch_plots/
-Phase1_DL/outputs/*.npy
-Phase1_DL/outputs/cache_origin.txt
-Phase1_DL/outputs/metadata_balanced.csv
-Phase1_DL/outputs/patient_manifest_balanced.csv
-Phase1_DL/outputs/patient_manifest_*.csv
-Phase1_DL/outputs/metadata_*.csv
-Phase1_DL/outputs/train.pid
-Phase1_DL/outputs/train_group.pid
-Phase1_DL/checkpoints/*.pth
-Phase1_DL/tensorboard/
-Phase1_DL/logs/
-Phase1_DL/colab_bundle/
-colab_bundle/
-
-# Patient-level data (identifiable Patient_ID + Age + diagnosis) — never push
-# to a cloud remote without explicitly confirming NLBS's data-use terms allow
-# it. Code/plots/reports stay in the repo; per-patient label tables do not.
-Phase1_DL/data/metadata.csv
-Phase1_DL/outputs/patient_manifest.csv
-Phase1_DL/outputs/prediction_probabilities.csv
-Phase1_DL/outputs/patient_predictions.csv
-Phase1_DL/outputs/patient_feature_index.csv
-Phase1_DL/outputs/image_feature_index.csv
 NLBSD_Metadata.csv
 
+# CBIS-DDSM or any bulk archive dropped into a phase folder.
+*/archive/
+*/archive.zip
+*.7z
+
+# =============================================================================
+# CSAW-CC (Phase 2) — patient-level screening records.
+#
+# 98,788 rows of per-patient screening and outcome data. The curators' terms
+# require recipients to REQUEST the data from Karolinska; publishing it in a
+# public repo would hand it to people who never did, regardless of the CC BY
+# licence. Keep it local.
+#
+# If you have confirmation that redistribution is permitted, delete these two
+# lines and `git add -f` the files.
+# =============================================================================
+Phase2_RL/CSAW-CC_breast_cancer_screening_data.csv
+Phase2_RL/CSAW-CC_Readme_annon_230516.docx
+
+# =============================================================================
+# Phase 2 — regenerable artifacts.
+#
+# outputs/ holds the transition buffer, checkpoints, logs and result CSVs. It is
+# all reproducible by rerunning the pipeline, and the buffer embeds patient-level
+# records, so it stays out of git.
+# =============================================================================
 Phase2_RL/outputs/
 Phase2_RL/checkpoints/*.pth
 Phase2_RL/tensorboard/
 Phase2_RL/logs/
+
+# =============================================================================
+# Phase 1 (retired 2026-07-21) — guards retained in case the tree is restored
+# from branch archive/phase1-dl.
+# =============================================================================
+Phase1_DL/outputs/
+Phase1_DL/checkpoints/*.pth
+Phase1_DL/tensorboard/
+Phase1_DL/logs/
+Phase1_DL/colab_bundle/
+Phase1_DL/data/metadata.csv
 
 # =============================================================================
 # Python
