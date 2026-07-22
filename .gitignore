@@ -17,19 +17,7 @@ NLBSD_Metadata.csv
 */archive.zip
 *.7z
 
-# =============================================================================
-# CSAW-CC (Phase 2) — patient-level screening records.
-#
-# 98,788 rows of per-patient screening and outcome data. The curators' terms
-# require recipients to REQUEST the data from Karolinska; publishing it in a
-# public repo would hand it to people who never did, regardless of the CC BY
-# licence. Keep it local.
-#
-# If you have confirmation that redistribution is permitted, delete these two
-# lines and `git add -f` the files.
-# =============================================================================
-Phase2_RL/CSAW-CC_breast_cancer_screening_data.csv
-Phase2_RL/CSAW-CC_Readme_annon_230516.docx
+
 
 # =============================================================================
 # Phase 2 — regenerable artifacts.
