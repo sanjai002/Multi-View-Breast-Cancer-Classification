@@ -259,7 +259,7 @@ Once those five are solid, the rest of the project is implementation detail.
 |---|---|
 | 1 | Paste the briefing. Work Block A. Read `DOCUMENTATION.md §1–3` |
 | 2 | Block B. Then read `agent.py` and find the CQL penalty term |
-| 3 | Block C. Then run `python evaluate.py --algo cql --split test` and interpret the ESS and support columns |
+| 3 | Block C. Then run `python evaluate.py --split test` and interpret the ESS and support columns |
 | 4 | Blocks D–E. Then read `METHODOLOGY.md §8` on the reward |
 | 5 | Block F. Then run `python simulator.py --quick` and read the calibration table |
 | 6 | Block G. Then read `DOCUMENTATION.md §12–13` — open problems and traps |

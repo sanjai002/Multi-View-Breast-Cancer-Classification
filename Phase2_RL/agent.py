@@ -1,10 +1,14 @@
 """
-Step 2 — networks and offline algorithms (METHODOLOGY.md §9, §10).
+Step 2 — network and the CQL offline agent (METHODOLOGY.md §9, §10).
 
-One network, feature-flagged, so the ablation ladder in §9.2 is a config sweep
-rather than five codebases:
+This project uses Conservative Q-Learning only. CQL here is the full stack:
 
-    BC  ->  DQN  ->  DoubleDQN  ->  Dueling  ->  +QR distributional  ->  +CQL
+    Double + Dueling + quantile-regression (QR) distributional Q,
+    plus the CQL conservatism penalty.
+
+(The BC/DQN/DDQN/Dueling/QR ablation ladder that used to live here was removed
+when the project settled on CQL. Recover it from git history if the ablation
+table is ever needed for the paper.)
 
 Discounting is plain-MDP by default: one gamma per decision step. Note the
 consequence (METHODOLOGY.md §5.1) — a 36-month wait is then discounted exactly
@@ -27,33 +31,26 @@ from config import CFG, N_ACTIONS
 
 
 class QNetwork(nn.Module):
-    """MLP torso + optional dueling + optional quantile (QR) output head.
+    """MLP torso + dueling + quantile (QR) output head.
 
-    A GRU belief encoder (METHODOLOGY.md §10.2) is deliberately NOT the default:
-    max trajectory length is 6 and the state already carries explicit history
+    A GRU belief encoder (METHODOLOGY.md §10.2) was considered and dropped: max
+    trajectory length is 6 and the state already carries explicit history
     summaries (prior recalls, cumulative screens, density deltas, previous
     action), so a recurrent net adds parameters that 16k transitions cannot
-    identify. Kept as an option for the ablation table.
+    identify.
     """
 
-    def __init__(self, d_state: int, hidden=None, n_quantiles=None,
-                 dueling=None, recurrent: bool = False):
+    def __init__(self, d_state: int, hidden=None, n_quantiles=None):
         super().__init__()
         hidden = hidden or CFG.hidden
         self.nq = n_quantiles or CFG.n_quantiles
-        self.dueling = CFG.dueling if dueling is None else dueling
-        self.recurrent = recurrent
 
         self.torso = nn.Sequential(
             nn.Linear(d_state, hidden), nn.LayerNorm(hidden), nn.ReLU(),
             nn.Linear(hidden, hidden), nn.LayerNorm(hidden), nn.ReLU(),
         )
-        if recurrent:
-            self.gru = nn.GRU(hidden, CFG.gru_hidden, batch_first=True)
-            hidden = CFG.gru_hidden
-
-        self.adv = nn.Linear(hidden, N_ACTIONS * self.nq)
-        self.val = nn.Linear(hidden, self.nq) if self.dueling else None
+        self.adv = nn.Linear(hidden, N_ACTIONS * self.nq)      # advantage stream
+        self.val = nn.Linear(hidden, self.nq)                  # dueling value stream
 
         # Quantile midpoints tau_hat_i = (2i+1)/2N  (Dabney et al., QR-DQN).
         self.register_buffer(
@@ -62,14 +59,9 @@ class QNetwork(nn.Module):
     def quantiles(self, s: torch.Tensor) -> torch.Tensor:
         """-> (B, n_actions, n_quantiles)"""
         h = self.torso(s)
-        if self.recurrent:
-            h, _ = self.gru(h.unsqueeze(1))
-            h = h.squeeze(1)
         a = self.adv(h).view(-1, N_ACTIONS, self.nq)
-        if self.dueling:
-            v = self.val(h).view(-1, 1, self.nq)
-            a = v + a - a.mean(dim=1, keepdim=True)
-        return a
+        v = self.val(h).view(-1, 1, self.nq)
+        return v + a - a.mean(dim=1, keepdim=True)             # dueling combine
 
     def forward(self, s: torch.Tensor) -> torch.Tensor:
         """Scalar Q(s,a) -> (B, n_actions)"""
@@ -89,21 +81,13 @@ def quantile_huber_loss(pred: torch.Tensor, target: torch.Tensor,
 
 
 class OfflineAgent:
-    """Discrete offline agent: BC / DQN / DoubleDQN / Dueling / QR / CQL."""
+    """Conservative Q-Learning agent (Double + Dueling + QR distributional)."""
 
-    def __init__(self, d_state: int, algo: str = "cql", cfg=CFG,
-                 device="cpu", **net_kw):
-        self.cfg, self.algo, self.device = cfg, algo.lower(), device
-        self.distributional = self.algo in ("qr", "cql")
-        self.cql = self.algo == "cql"
-        self.double = cfg.double and self.algo in ("ddqn", "dueling", "qr", "cql")
-        nq = cfg.n_quantiles if self.distributional else 1
-        dueling = net_kw.pop("dueling", None)
-        if self.algo in ("dqn", "ddqn"):
-            dueling = False
+    def __init__(self, d_state: int, cfg=CFG, device="cpu", **net_kw):
+        self.cfg, self.device = cfg, device
 
-        self.q = QNetwork(d_state, n_quantiles=nq, dueling=dueling, **net_kw).to(device)
-        self.q_t = QNetwork(d_state, n_quantiles=nq, dueling=dueling, **net_kw).to(device)
+        self.q = QNetwork(d_state, **net_kw).to(device)
+        self.q_t = QNetwork(d_state, **net_kw).to(device)
         self.q_t.load_state_dict(self.q.state_dict())
         for p in self.q_t.parameters():
             p.requires_grad_(False)
@@ -115,51 +99,29 @@ class OfflineAgent:
         s, a, r = batch["s"], batch["a"], batch["r"]
         s2, done, tau, w = batch["s2"], batch["done"], batch["tau"], batch["w"]
 
-        if self.algo == "bc":
-            logits = self.q(s)
-            loss = (F.cross_entropy(logits, a, reduction="none") * w).mean()
-            self._step(loss)
-            return {"loss": float(loss)}
-
         # MDP: one gamma per decision step (CFG.smdp=True switches to gamma**tau).
         disc = self.cfg.discount(tau)
 
         with torch.no_grad():
-            if self.double:
-                a2 = self.q(s2).argmax(1)              # action from ONLINE net
-            else:
-                a2 = self.q_t(s2).argmax(1)
-            if self.distributional:
-                qt = self.q_t.quantiles(s2)                      # (B,A,Nq)
-                nxt = qt[torch.arange(len(a2)), a2]              # (B,Nq)
-                target = r.unsqueeze(1) + disc.unsqueeze(1) * (1 - done).unsqueeze(1) * nxt
-            else:
-                nxt = self.q_t(s2)[torch.arange(len(a2)), a2]
-                target = r + disc * (1 - done) * nxt
+            a2 = self.q(s2).argmax(1)                            # Double: action from ONLINE net
+            qt = self.q_t.quantiles(s2)                          # (B,A,Nq)
+            nxt = qt[torch.arange(len(a2)), a2]                  # (B,Nq)
+            target = r.unsqueeze(1) + disc.unsqueeze(1) * (1 - done).unsqueeze(1) * nxt
 
-        if self.distributional:
-            pred = self.q.quantiles(s)[torch.arange(len(a)), a]  # (B,Nq)
-            td = quantile_huber_loss(pred, target, self.q.tau_hat)
-        else:
-            pred = self.q(s)[torch.arange(len(a)), a]
-            td = F.smooth_l1_loss(pred, target, reduction="none")
+        pred = self.q.quantiles(s)[torch.arange(len(a)), a]      # (B,Nq)
+        td = quantile_huber_loss(pred, target, self.q.tau_hat)
+        td_loss = (td * w).mean()
 
-        loss = (td * w).mean()
-        logs = {"td": float(loss)}
+        # Conservatism: push DOWN values of actions the clinicians never took in
+        # this state, push UP the observed one. This is what stops the net
+        # inventing a large Q for out-of-support intervals (METHODOLOGY.md §0.1).
+        qall = self.q(s)
+        gap = torch.logsumexp(qall, dim=1) - qall[torch.arange(len(a)), a]
+        cql_loss = (gap * w).mean()
 
-        if self.cql:
-            # Conservatism: push DOWN values of actions the clinicians never
-            # took in this state, push UP the observed one. This is what stops
-            # the net inventing a large Q for out-of-support intervals (§0.1).
-            qall = self.q(s)
-            gap = torch.logsumexp(qall, dim=1) - qall[torch.arange(len(a)), a]
-            cql_loss = (gap * w).mean()
-            loss = loss + self.cfg.cql_alpha * cql_loss
-            logs["cql"] = float(cql_loss)
-
+        loss = td_loss + self.cfg.cql_alpha * cql_loss
         self._step(loss)
-        logs["loss"] = float(loss)
-        return logs
+        return {"loss": float(loss), "td": float(td_loss), "cql": float(cql_loss)}
 
     def _step(self, loss):
         self.opt.zero_grad(set_to_none=True)
@@ -195,7 +157,7 @@ class OfflineAgent:
         return P
 
     def save(self, path):
-        torch.save({"q": self.q.state_dict(), "algo": self.algo}, path)
+        torch.save({"q": self.q.state_dict(), "algo": "cql"}, path)
 
     def load(self, path):
         sd = torch.load(path, map_location=self.device, weights_only=True)

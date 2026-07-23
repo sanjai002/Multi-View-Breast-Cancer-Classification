@@ -269,26 +269,26 @@ Every history feature uses `shift(1)` so a feature at visit *t* sees only visits
 they must never enter a state. The assert exists because this is the single
 easiest way to publish a fraudulent AUC.
 
-### `agent.py` — networks and algorithms
+### `agent.py` — the network and the CQL agent
 
-One `QNetwork` (MLP torso → optional dueling → optional quantile head) and one
-`OfflineAgent` whose behaviour is feature-flagged, so the ablation ladder is a
-config sweep rather than five codebases:
+One `QNetwork` (MLP torso → dueling → quantile head) and one `OfflineAgent`.
+The project uses **Conservative Q-Learning only**; the agent is the full CQL
+stack — Double + Dueling + quantile-regression (QR) distributional Q, plus the
+conservatism penalty.
 
-```
-bc → dqn → ddqn → dueling → qr → cql
-```
-
-CQL adds a conservatism term that pushes down the value of actions the
-clinicians never took in a given state — the direct answer to §3.1:
+CQL adds a term that pushes down the value of actions the clinicians never took
+in a given state — the direct answer to §3.1:
 
 ```
-L = α·(logsumexp_a Q(s,a) − Q(s,a_observed)) + TD error
+L = TD error + α·(logsumexp_a Q(s,a) − Q(s,a_observed))
 ```
 
-A GRU belief encoder exists but is **off by default**: trajectories are at most
-6 visits and the state already carries explicit history, so a recurrent net adds
-parameters that 16k transitions cannot identify.
+The earlier `bc → dqn → ddqn → dueling → qr → cql` ablation ladder was removed
+once the project settled on CQL; recover it from git history if the ablation
+table is needed for the paper. A GRU belief encoder was also considered and
+dropped: trajectories are at most 6 visits and the state already carries
+explicit history, so a recurrent net adds parameters that 16k transitions
+cannot identify.
 
 ### `train.py` — the offline loop
 
@@ -394,20 +394,27 @@ assumptions" requirement.
 
 ---
 
-## 8. Algorithms
+## 8. Algorithm
+
+The project uses **Conservative Q-Learning only**. The table records why the
+alternatives were rejected, so the choice is defensible rather than assumed:
 
 | Algorithm | Usable offline? | Verdict |
 |---|---|---|
 | PPO, A2C | ❌ | On-policy; need environment interaction. **Simulator arm only** |
 | SAC | ❌ | Continuous-action design; needs interaction |
-| DQN, Double DQN, Dueling | ⚠️ | Off-policy but extrapolate badly off-support. **Ablations only** |
+| DQN, Double DQN, Dueling | ⚠️ | Off-policy but extrapolate badly off-support |
 | Rainbow | ⚠️ | Mostly exploration machinery, irrelevant offline |
-| **CQL** | ✅ | **Recommended.** Penalises out-of-support action values |
-| BCQ, IQL | ✅ | Reasonable alternatives |
+| **CQL** | ✅ | **Chosen.** Penalises out-of-support action values |
+| BCQ, IQL | ✅ | Reasonable alternatives, not implemented |
 
-**Primary: CQL** on a dueling + double + quantile (QR) backbone. Sweep
-`CFG.cql_alpha ∈ {0.1, 1, 5, 10}` and show the policy's deviation from standard
-care shrinking as α grows — that plot is the credibility argument.
+**The committed model is CQL** on a Double + Dueling + quantile (QR) backbone.
+Sweep `CFG.cql_alpha ∈ {0.1, 1, 5, 10}` and show the policy's deviation from
+standard care shrinking as α grows — that plot is the credibility argument.
+
+`agent.py` implements only CQL. The DQN-family variants above were once wired up
+as an ablation ladder and were removed when the project settled on CQL; they are
+recoverable from git history if a reviewer asks for the comparison table.
 
 ---
 
@@ -462,22 +469,22 @@ python data_audit.py
 # 1. build the transition buffer  ->  outputs/buffer.npz
 python data.py
 
-# 2. train the conservative offline agent  ->  outputs/cql_seed0.pt
-python train.py --algo cql --steps 20000
+# 2. train the conservative offline agent (CQL)  ->  outputs/cql_seed0.pt
+python train.py --steps 20000
 
 # 3. evaluate against all baselines  ->  outputs/eval_test.csv
-python evaluate.py --algo cql --split test
+python evaluate.py --split test
 
 # 4. the causal arm: calibrate + counterfactual schedules
 python simulator.py --quick        # ~1 minute
 python simulator.py                # full: 600 draws x 15k women
 ```
 
-Ablation ladder and multi-seed runs (publication needs ≥5 seeds):
+Multi-seed runs (publication needs ≥5 seeds) and the conservatism sweep:
 
 ```bash
-python train.py --algo bc dqn ddqn dueling qr cql --seeds 5
-python train.py --algo cql --cql-alpha 0.1     # conservatism sweep
+python train.py --seeds 5
+python train.py --cql-alpha 0.1                # vary CQL conservatism
 ```
 
 Useful switches:

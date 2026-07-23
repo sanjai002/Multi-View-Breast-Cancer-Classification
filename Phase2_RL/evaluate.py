@@ -1,7 +1,8 @@
 """
 Step 4 — off-policy evaluation, clinical metrics, baselines (METHODOLOGY.md §12-14).
 
-    python evaluate.py --algo cql
+    python evaluate.py                 # scores CQL against all baselines
+    python evaluate.py --split val
 
 Two kinds of claim live here and they must not be blurred:
 
@@ -299,7 +300,6 @@ def main():
     from train import load_buffer, split_idx
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--algo", default="cql")
     ap.add_argument("--split", default="test", choices=["val", "test"])
     args = ap.parse_args()
 
@@ -324,15 +324,15 @@ def main():
         rows.append(evaluate_policy(b, fn(buf["s"][idx]), buf, idx, ex, X,
                                     policy_fn=fn))
 
-    ckpt = CFG.out / f"{args.algo}_seed0.pt"
+    ckpt = CFG.out / "cql_seed0.pt"
     if ckpt.exists():
-        agent = OfflineAgent(X.shape[1], algo=args.algo).load(ckpt)
+        agent = OfflineAgent(X.shape[1]).load(ckpt)
         q = agent.q_values(X[buf["s"][idx]])
         a = q.argmax(1)
         # Score for AUC: preference for recalling over not, marginalised.
         qr = q.reshape(len(q), len(INTERVALS_YEARS), 2)
         score = qr[:, :, 1].max(1) - qr[:, :, 0].max(1)
-        rows.append(evaluate_policy(f"RL-{args.algo}", a, buf, idx, ex, X,
+        rows.append(evaluate_policy("RL-cql", a, buf, idx, ex, X,
                                     score=score, agent=agent))
     else:
         print(f"!! no checkpoint {ckpt.name}; run train.py first. Baselines only.\n")

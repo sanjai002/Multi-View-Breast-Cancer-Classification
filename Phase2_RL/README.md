@@ -13,8 +13,8 @@ for the paper.
 ```bash
 python data_audit.py                        # verify the dataset
 python data.py                              # -> outputs/buffer.npz
-python train.py --algo cql --steps 20000    # -> outputs/cql_seed0.pt
-python evaluate.py --algo cql --split test  # -> outputs/eval_test.csv
+python train.py --steps 20000               # -> outputs/cql_seed0.pt (CQL)
+python evaluate.py --split test             # -> outputs/eval_test.csv
 python simulator.py --quick                 # counterfactual schedules
 ```
 
@@ -27,7 +27,7 @@ CPU is fine; the whole pipeline is minutes.
 | `config.py` | Every cost, γ, and path. Sensitivity analysis = sweep this |
 | `data_audit.py` | Reproduces every empirical claim in the docs |
 | `data.py` | CSV → exams → states → transition buffer |
-| `agent.py` | Networks + BC / DQN / DDQN / Dueling / QR / **CQL** |
+| `agent.py` | The network + the **CQL** agent (Double + Dueling + QR) |
 | `train.py` | Offline training, FQE selection, collapse gate |
 | `evaluate.py` | FQE / WIS / ESS / support, clinical metrics, baselines |
 | `simulator.py` | Calibrated natural-history model — the causal arm |

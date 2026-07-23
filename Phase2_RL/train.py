@@ -1,8 +1,8 @@
 """
-Step 3 — offline training loop (METHODOLOGY.md §11).
+Step 3 — offline CQL training loop (METHODOLOGY.md §11).
 
-    python train.py --algo cql
-    python train.py --algo bc dqn ddqn dueling qr cql     # the ablation ladder
+    python train.py                 # train CQL
+    python train.py --seeds 5       # publication runs need >=5 seeds
 
 There is NO exploration and NO environment: the buffer is fixed. Checkpoint
 selection therefore cannot use rollouts — it uses validation FQE (§11.6).
@@ -97,8 +97,7 @@ def policy_report(agent, buf, X, idx) -> dict:
     return report
 
 
-def train(algo="cql", steps=None, seed=0, buf=None, X=None, verbose=True,
-          device="cpu"):
+def train(steps=None, seed=0, buf=None, X=None, verbose=True, device="cpu"):
     from evaluate import fqe          # imported here to avoid a circular import
 
     buf = buf if buf is not None else load_buffer()
@@ -108,12 +107,12 @@ def train(algo="cql", steps=None, seed=0, buf=None, X=None, verbose=True,
     rng = np.random.default_rng(seed)
 
     tr, va = split_idx(buf, "train"), split_idx(buf, "val")
-    agent = OfflineAgent(X.shape[1], algo=algo, device=device)
+    agent = OfflineAgent(X.shape[1], device=device)
     batch = make_batcher(buf, tr, X, device, rng, CFG.batch_size)
 
     best = {"fqe": -np.inf, "step": -1}
     CFG.out.mkdir(exist_ok=True, parents=True)
-    ckpt = CFG.out / f"{algo}_seed{seed}.pt"
+    ckpt = CFG.out / f"cql_seed{seed}.pt"
     history = []
 
     for step in range(1, steps + 1):
@@ -150,13 +149,11 @@ def train(algo="cql", steps=None, seed=0, buf=None, X=None, verbose=True,
 
     if verbose:
         print(f"  best: step {best['step']} FQE {best['fqe']:+.4f} -> {ckpt.name}")
-    return agent, {"algo": algo, "seed": seed, "best": best, "history": history}
+    return agent, {"algo": "cql", "seed": seed, "best": best, "history": history}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--algo", nargs="+", default=["cql"],
-                    choices=["bc", "dqn", "ddqn", "dueling", "qr", "cql"])
     ap.add_argument("--seeds", type=int, default=1,
                     help="publication runs need >=5 (METHODOLOGY.md §11.5)")
     ap.add_argument("--steps", type=int, default=None)
@@ -168,15 +165,14 @@ def main():
 
     buf = load_buffer()
     X = buf["X"]
-    print(f"[train] state dim {X.shape[1]}  gamma {CFG.gamma:.4f}/yr  "
+    print(f"[train] CQL  state dim {X.shape[1]}  gamma {CFG.gamma:.4f}/yr  "
           f"cql_alpha {CFG.cql_alpha}  steps {args.steps or CFG.steps}")
 
     out = []
-    for algo in args.algo:
-        for seed in range(args.seeds):
-            print(f"\n=== {algo}  seed {seed} ===")
-            _, res = train(algo, steps=args.steps, seed=seed, buf=buf, X=X)
-            out.append(res)
+    for seed in range(args.seeds):
+        print(f"\n=== cql  seed {seed} ===")
+        _, res = train(steps=args.steps, seed=seed, buf=buf, X=X)
+        out.append(res)
 
     (CFG.out / "train_history.json").write_text(json.dumps(out, indent=2))
     print(f"\nsaved -> {CFG.out / 'train_history.json'}")

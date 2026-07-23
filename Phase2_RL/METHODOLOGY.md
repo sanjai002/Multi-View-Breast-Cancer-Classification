@@ -629,14 +629,16 @@ as an ablation, never in the headline model.
 | **Double DQN** | ⚠️ | Fixes maximization bias, *not* extrapolation error. Ablation |
 | **Dueling DQN** | ⚠️ | Better value estimates under near-identical action values — which is exactly our regime. Good as an architectural component, insufficient alone |
 | **Rainbow** | ⚠️ | Its components (PER, n-step, distributional, noisy nets) mostly target exploration, which is irrelevant offline. Distributional (C51/QR) *is* valuable for risk-sensitivity |
-| **CQL** | ✅ | **Recommended.** Explicitly penalizes OOD action values — directly addresses §0.1 |
-| **BCQ / discrete BCQ** | ✅ | Strong alternative; constrains the policy to behaviour-supported actions |
-| **IQL** | ✅ | Avoids querying OOD actions entirely; simplest to tune |
+| **CQL** | ✅ | **Chosen.** Explicitly penalizes OOD action values — directly addresses §0.1 |
+| **BCQ / discrete BCQ** | ✅ | Strong alternative; constrains the policy to behaviour-supported actions. Not implemented |
+| **IQL** | ✅ | Avoids querying OOD actions entirely; simplest to tune. Not implemented |
 
-### 9.2 Recommendation
+### 9.2 The committed model
 
-**Primary: Conservative Q-Learning (CQL) with a dueling, double, distributional
-(QR-DQN) backbone, in the MDP formulation of §5.1.**
+**Conservative Q-Learning (CQL) with a Double, Dueling, distributional (QR-DQN)
+backbone, in the MDP formulation of §5.1 — and nothing else.** `agent.py`
+implements this one algorithm; the project settled on CQL and the DQN-family
+ablation ladder was removed from the codebase.
 
 The CQL objective adds a conservatism term to standard TD learning:
 
@@ -655,16 +657,23 @@ optimistic. Sweep $\alpha \in \{0.1, 1, 5, 10\}$ and show the policy's deviation
 from the clinical standard shrinks as $\alpha$ grows — that plot is the paper's
 credibility argument.
 
-**Secondary (simulator arm): PPO**, where interaction is available and on-policy
-learning is valid. Agreement between offline-CQL and simulator-PPO policies is a
-result worth reporting.
+**Simulator arm.** The simulator ranks schedules by direct policy rollout, not by
+a learned on-policy agent (the earlier plan named PPO here). Training a
+simulator-side PPO agent and checking that it agrees with offline-CQL remains a
+worthwhile extension, but it is not currently implemented.
 
-**Ablation ladder for the comparison table you asked for:** Behaviour Cloning →
-DQN → Double DQN → Dueling Double DQN → + QR distributional → + CQL (full) → PPO
-(simulator). Report each with the same OPE protocol.
+**On the ablation ladder.** An earlier version of this design proposed a full
+comparison table — Behaviour Cloning → DQN → Double DQN → Dueling Double DQN →
++ QR distributional → + CQL — each scored under the same OPE protocol. The code
+for the intermediate rungs was removed once CQL was chosen; it is recoverable
+from git history if a reviewer asks for the table. What remains as an *internal*
+ablation is the CQL conservatism sweep ($\alpha \in \{0.1, 1, 5, 10\}$), which is
+the ablation that actually matters for the OOD-extrapolation argument.
 
-Use **d3rlpy** for CQL/BCQ/IQL — it is the maintained reference implementation and
-saves weeks over reimplementing.
+**Implementation note.** CQL is implemented directly in `agent.py` (~30 lines on
+top of a QR-DQN backbone), not via d3rlpy. This keeps the project dependency-free
+beyond numpy/pandas/scikit-learn/torch, which matters on the CPU-only target
+machine. d3rlpy remains the sensible route if BCQ or IQL are ever added.
 
 ---
 
@@ -1061,35 +1070,37 @@ a binding condition of use, not a courtesy. Contact them before submission.
 
 ## Appendix A — Implementation file plan
 
+This is the **actual** layout as built: eight flat Python modules, one per
+pipeline stage, rather than the nested package the early plan envisaged. ✅ = in
+the repo and running; ⬜ = designed here but not yet built (all image-dependent,
+blocked on obtaining the DICOMs).
+
 ```
 Phase2_RL/
-├── data_audit.py             ✅ written — reproduces every number above
-├── config.py                    all costs, γ, α, paths in ONE place
-├── build_exams.py               csv → exam-level table + QC (§1.2–1.3)
-├── splits.py                    stratified patient-level splits (§1.4)
-├── preprocess_images.py         DICOM → cached tensors (§2)
-├── encoder/
-│   ├── model.py                 ConvNeXt + masked multi-view fusion (§10.1)
-│   └── train_encoder.py         Stage A (§11.1)
-├── cache_states.py              Stage B — states.npy (§11.1)
-├── mdp.py                       state builder + LABEL-LEAK ASSERTIONS (§6)
-├── trajectories.py              episodes, terminals, censoring (§3)
-├── reward.py                    QALY costs + data-driven delay cost (§8)
-├── behaviour_policy.py          π̂_b for propensities / OPE (§12.1)
-├── agents/
-│   ├── smdp_cql.py              PRIMARY (§9.2)
-│   ├── dqn.py / double_dqn.py / dueling_dqn.py    ablation ladder
-│   └── bc.py                    behaviour cloning baseline
-├── simulator/
-│   ├── progression.py           3-state latent model (§5.5)
-│   ├── calibrate.py             fit to CSAW-CC targets
-│   └── train_ppo.py             simulator arm (§9.2)
-├── train_rl.py                  Stage C (§11)
-├── ope.py                       WIS / PDWIS / FQE / DR + ESS (§12.1)
-├── evaluate.py                  clinical metrics + frontier (§12.2–12.3)
-├── baselines.py                 §13
-└── explain.py                   §14
+├── config.py            ✅ all costs, γ, CQL α, paths in ONE place (§8, §9.2)
+├── data_audit.py        ✅ reproduces every empirical number above (§0)
+├── data.py              ✅ csv → exams → 29-d causal state → transition buffer
+│                           folds in build_exams/splits/mdp/trajectories/reward/
+│                           behaviour_policy — with the LABEL-LEAK ASSERTIONS (§6)
+├── agent.py             ✅ the CQL agent only: Double + Dueling + QR (§9.2)
+├── train.py             ✅ offline loop, FQE checkpoint selection, collapse gate (§11)
+├── evaluate.py          ✅ FQE / WIS / PDWIS + ESS, clinical metrics, baselines (§12–13)
+├── simulator.py         ✅ 3-state progression + calibration + rollout (§5.5, §9.2)
+│                           ranks schedules by direct rollout, not a learned agent
+├── DOCUMENTATION.md     ✅ full operational reference
+├── LEARNING_GUIDE.md    ✅ study guide
+│
+├── encoder / images     ⬜ ConvNeXt + masked multi-view fusion (§10.1) — no DICOMs
+└── explain.py           ⬜ Grad-CAM vs radiologist annotations (§14) — needs images
 ```
+
+Notes on the collapse from the early plan:
+- `build_exams` / `splits` / `mdp` / `trajectories` / `reward` / `behaviour_policy`
+  are all functions inside `data.py`, not separate files.
+- The `agents/` package (BC, DQN, Double, Dueling) is gone — the project uses CQL
+  only (§9.2). The intermediate rungs are in git history.
+- `simulator/train_ppo.py` was never built; the simulator evaluates schedules by
+  rollout directly.
 
 ## Appendix B — Notation
 
